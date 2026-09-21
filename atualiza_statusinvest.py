@@ -1,4 +1,3 @@
-@'
 import json
 import requests
 
@@ -217,6 +216,4 @@ for i in range(0, len(payload), batch_size):
     res = requests.post(f"{SUPABASE_URL}/rest/v1/ativos_mercado", json=lote, headers=HEADERS_SUPABASE)
     print(f"Lote {i//batch_size + 1}/{(len(payload)//batch_size) + 1}: Status {res.status_code}")
 
-print("\nCarga completa com ROIC, Liquidez e Vacâncias finalizada com sucesso!")
-'@ | Out-File -FilePath .\atualiza_statusinvest.py -Encoding utf8
-python .\atualiza_statusinvest.py
+print("\nCarga completa finalizada com sucesso!")
