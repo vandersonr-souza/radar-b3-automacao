@@ -1,0 +1,28 @@
+name: Atualização Diária da B3 no Supabase
+
+on:
+  schedule:
+    # Executa de segunda a sexta às 21:30 UTC (18:30 no fuso de Brasília)
+    - cron: '30 21 * * 1-5'
+  workflow_dispatch: # Permite acionar manualmente a qualquer momento
+
+jobs:
+  atualizar_mercado:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Obter código do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar Dependências
+        run: |
+          pip install requests
+
+      - name: Executar Carga da B3 no Supabase
+        run: |
+          python atualiza_statusinvest.py
