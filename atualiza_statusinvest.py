@@ -1,8 +1,10 @@
 import json
+import os
 import requests
 
 SUPABASE_URL = "https://vlrdidsvsfvkajqlkiwj.supabase.co"
-SUPABASE_KEY = "sb_publishable_Eobaw2W6-WdIg7-g4EXTBQ_v6tgFMy6"
+# Lê do GitHub Secrets; se rodar local no PC, usa fallback de ambiente
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "SUA_SERVICE_ROLE_AQUI_SE_RODAR_LOCAL")
 
 HEADERS_SUPABASE = {
     "apikey": SUPABASE_KEY,
