@@ -2,9 +2,8 @@ name: Atualização Diária da B3 no Supabase
 
 on:
   schedule:
-    # Executa de segunda a sexta às 21:30 UTC (18:30 no fuso de Brasília)
     - cron: '30 21 * * 1-5'
-  workflow_dispatch: # Permite acionar manualmente a qualquer momento
+  workflow_dispatch:
 
 jobs:
   atualizar_mercado:
@@ -24,5 +23,7 @@ jobs:
           pip install requests
 
       - name: Executar Carga da B3 no Supabase
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           python atualiza_statusinvest.py
