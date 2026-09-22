@@ -2,6 +2,7 @@ name: Atualização Diária da B3 no Supabase
 
 on:
   schedule:
+    # Executa de segunda a sexta às 21:30 UTC (18:30 no fuso de Brasília)
     - cron: '30 21 * * 1-5'
   workflow_dispatch:
 
