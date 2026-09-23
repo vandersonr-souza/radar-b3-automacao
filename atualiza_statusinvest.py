@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from datetime import datetime, timezone
 import requests
 
 SUPABASE_URL = "https://vlrdidsvsfvkajqlkiwj.supabase.co"
@@ -91,6 +92,13 @@ except Exception as e:
 print(f"-> {len(fiis_data)} FIIs obtidos.")
 
 payload = []
+
+# Um só carimbo para toda a carga do dia -- não um por ativo, senão dois
+# ativos processados em milissegundos diferentes pareceriam "de dias
+# diferentes" numa comparação. ISO 8601 com fuso, direto em UTC (o app
+# converte para exibição; salvar em UTC evita ambiguidade de horário de
+# verão).
+ATUALIZADO_EM = datetime.now(timezone.utc).isoformat()
 
 # Classificação BEST por SETOR, não por prefixo de ticker.
 #
@@ -247,7 +255,8 @@ for item in acoes_data:
         "faixa_payout": faixa_payout,
         "coerente_dy_lucro": coerente,
         "status_compra": status_compra,
-        "recomendacao_motivo": motivo
+        "recomendacao_motivo": motivo,
+        "atualizado_em": ATUALIZADO_EM
     })
 
 fii_papel_keywords = ["recebíveis", "papel", "cri", "títulos", "crédito"]
@@ -345,7 +354,8 @@ for item in fiis_data:
         "faixa_payout": None,
         "coerente_dy_lucro": True,
         "status_compra": status_compra,
-        "recomendacao_motivo": motivo
+        "recomendacao_motivo": motivo,
+        "atualizado_em": ATUALIZADO_EM
     })
 
 print(f"3/3 Enviando {len(payload)} ativos com novas métricas para o Supabase...")
