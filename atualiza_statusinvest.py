@@ -67,31 +67,65 @@ def parse_num_or_none(val):
     except (ValueError, TypeError):
         return None
 
+TAKE_STATUSINVEST = 600  # tamanho de página pedido nas URLs (take=600)
+
+
+def baixar_lista_statusinvest(url, rotulo):
+    """Baixa uma lista do Status Invest. Em qualquer falha devolve [] e
+    explica o motivo no log; quem decide abortar é a trava de carga vazia
+    logo depois dos dois downloads."""
+    try:
+        res = requests.get(url, headers=HEADERS_BROWSER, timeout=30)
+    except requests.RequestException as e:
+        print(f"Erro de rede ao baixar {rotulo}: {e}")
+        return []
+    if not (200 <= res.status_code < 300):
+        print(f"Erro ao baixar {rotulo}: HTTP {res.status_code}. Início: {res.text[:200]!r}")
+        return []
+    try:
+        data_raw = res.json()
+    except ValueError:
+        # Caso típico de bloqueio: status 200 com HTML no corpo.
+        print(f"Erro ao baixar {rotulo}: resposta não é JSON (provável bloqueio). "
+              f"Início: {res.text[:200]!r}")
+        return []
+    lista = data_raw.get("list") if isinstance(data_raw, dict) else None
+    if not isinstance(lista, list):
+        chaves = list(data_raw)[:10] if isinstance(data_raw, dict) else type(data_raw).__name__
+        print(f"Erro ao baixar {rotulo}: JSON sem o campo 'list'. Recebido: {chaves}")
+        return []
+    if len(lista) >= TAKE_STATUSINVEST:
+        # Não sabemos se existem mais ativos do que a página pede. Lista
+        # exatamente cheia = provável corte silencioso.
+        print(f"AVISO: {rotulo}: {len(lista)} linhas, igual ao limite da página "
+              f"(take={TAKE_STATUSINVEST}). Pode haver ativos cortados.")
+    return lista
+
+
 print("1/3 Baixando Ações (incluindo ROIC, ROE e Liquidez)...")
 url_acoes = "https://statusinvest.com.br/category/advancedsearchresultpaginated?search=%7B%7D&CategoryType=1&take=600"
-try:
-    res_acoes = requests.get(url_acoes, headers=HEADERS_BROWSER, timeout=30)
-    data_raw = res_acoes.json()
-    acoes_data = data_raw.get("list", []) if isinstance(data_raw, dict) else []
-except Exception as e:
-    print(f"Erro ações: {e}")
-    acoes_data = []
-
+acoes_data = baixar_lista_statusinvest(url_acoes, "ações")
 print(f"-> {len(acoes_data)} ações obtidas.")
 
 print("2/3 Baixando FIIs (incluindo Vacância Física e Financeira)...")
 url_fiis = "https://statusinvest.com.br/category/advancedsearchresultpaginated?search=%7B%7D&CategoryType=2&take=600"
-try:
-    res_fiis = requests.get(url_fiis, headers=HEADERS_BROWSER, timeout=30)
-    data_raw = res_fiis.json()
-    fiis_data = data_raw.get("list", []) if isinstance(data_raw, dict) else []
-except Exception as e:
-    print(f"Erro FIIs: {e}")
-    fiis_data = []
-
+fiis_data = baixar_lista_statusinvest(url_fiis, "FIIs")
 print(f"-> {len(fiis_data)} FIIs obtidos.")
 
+# Trava de carga vazia (23/set). Antes, se o Status Invest bloqueasse a
+# requisição (ex.: página anti-robô em HTML no lugar do JSON), as duas
+# listas voltavam vazias, o payload ficava vazio e o script terminava com
+# "Carga completa: 0/0 lote(s)" -- job VERDE com a base parada. Lista
+# vazia nunca é resultado legítimo para a B3 inteira.
+if not acoes_data or not fiis_data:
+    faltando = [n for n, l in (("ações", acoes_data), ("FIIs", fiis_data)) if not l]
+    print(f"ERRO: nenhuma linha recebida para {' e '.join(faltando)}. "
+          "Carga abortada sem gravar nada -- a base mantém a carga anterior "
+          "(e o carimbo atualizado_em antigo deixa isso visível no app).")
+    sys.exit(1)
+
 payload = []
+sem_preco = []  # tickers descartados por não terem cotação
 
 # Um só carimbo para toda a carga do dia -- não um por ativo, senão dois
 # ativos processados em milissegundos diferentes pareceriam "de dias
@@ -137,6 +171,11 @@ for item in acoes_data:
         continue
     
     preco = parse_num(item.get("price"))
+    if preco <= 0:
+        # Sem cotação, não grava: "preco = 0" viraria R$ 0,00 no app, como
+        # se fosse dado. A linha antiga (com carimbo antigo) fica na base.
+        sem_preco.append(ticker)
+        continue
     dy = parse_num(item.get("dy"))
     p_l = parse_num(item.get("p_l"))
     p_vp = parse_num(item.get("p_vp"))
@@ -269,6 +308,11 @@ for item in fiis_data:
         continue
         
     preco = parse_num(item.get("price"))
+    if preco <= 0:
+        # Sem cotação, não grava: "preco = 0" viraria R$ 0,00 no app, como
+        # se fosse dado. A linha antiga (com carimbo antigo) fica na base.
+        sem_preco.append(ticker)
+        continue
     dy = parse_num(item.get("dy"))
     p_vp = parse_num(item.get("p_vp"))
     sub = str(item.get("segment") or "").lower()
@@ -358,6 +402,10 @@ for item in fiis_data:
         "atualizado_em": ATUALIZADO_EM
     })
 
+if sem_preco:
+    print(f"{len(sem_preco)} ativo(s) sem cotação, não gravados: {', '.join(sem_preco[:15])}"
+          f"{' ...' if len(sem_preco) > 15 else ''}")
+
 print(f"3/3 Enviando {len(payload)} ativos com novas métricas para o Supabase...")
 batch_size = 50
 total_lotes = (len(payload) // batch_size) + (1 if len(payload) % batch_size else 0)
@@ -391,3 +439,44 @@ if lotes_com_falha:
     sys.exit(1)  # marca o job do GitHub Actions como falho, não silencioso
 else:
     print(f"\nCarga completa: {total_lotes}/{total_lotes} lote(s) confirmados no Supabase.")
+
+# ---------------------------------------------------------------------------
+# Histórico diário (23/set). A tabela ativos_mercado é uma FOTO: cada carga
+# sobrescreve a anterior. Esta tabela acumula uma linha por ativo por dia,
+# enxuta, para que no futuro dê para ver tendência (P/VP, DY, preço) e,
+# com 1-2 anos acumulados, derivar DPA de anos anteriores de dado real.
+# Chave (ticker, data_ref): rodar duas vezes no mesmo dia atualiza a linha
+# do dia em vez de duplicar. Só roda se a carga principal deu certo.
+# ---------------------------------------------------------------------------
+from zoneinfo import ZoneInfo
+
+DATA_REF = datetime.now(ZoneInfo("America/Sao_Paulo")).date().isoformat()
+CAMPOS_HISTORICO = ("ticker", "tipo", "preco", "dy_12m", "dpa_ltm", "p_l", "p_vp",
+                    "margem_liquida", "roe", "vacancia_fisica", "liquidez_media_diaria",
+                    "faixa_payout", "status_compra")
+historico = [{**{c: linha.get(c) for c in CAMPOS_HISTORICO},
+              "data_ref": DATA_REF, "atualizado_em": ATUALIZADO_EM} for linha in payload]
+
+print(f"\nGravando histórico do dia {DATA_REF} ({len(historico)} linhas)...")
+falhas_hist = 0
+lotes_hist = (len(historico) + batch_size - 1) // batch_size
+for i in range(0, len(historico), batch_size):
+    lote = historico[i:i + batch_size]
+    try:
+        res = requests.post(f"{SUPABASE_URL}/rest/v1/ativos_mercado_historico?on_conflict=ticker,data_ref",
+                            json=lote, headers=HEADERS_SUPABASE, timeout=30)
+        ok = 200 <= res.status_code < 300
+        if not ok:
+            print(f"Histórico lote {i // batch_size + 1}/{lotes_hist}: FALHA -- status "
+                  f"{res.status_code}. Corpo: {res.text[:300]}")
+    except requests.RequestException as e:
+        ok = False
+        print(f"Histórico lote {i // batch_size + 1}/{lotes_hist}: FALHA DE REDE ({e})")
+    falhas_hist += 0 if ok else 1
+
+if falhas_hist:
+    print(f"\nA carga PRINCIPAL foi gravada, mas o HISTÓRICO falhou em "
+          f"{falhas_hist}/{lotes_hist} lote(s). Se o erro diz que a tabela não existe, "
+          "rode o SQL de criação de ativos_mercado_historico no Supabase.")
+    sys.exit(1)
+print(f"Histórico completo: {lotes_hist}/{lotes_hist} lote(s) confirmados.")
