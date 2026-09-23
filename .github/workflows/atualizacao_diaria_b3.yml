@@ -4,7 +4,7 @@ on:
   schedule:
     # Executa de segunda a sexta às 21:30 UTC (18:30 no fuso de Brasília)
     - cron: '30 21 * * 1-5'
-  workflow_dispatch:
+  workflow_dispatch: # Permite acionar manualmente a qualquer momento
 
 jobs:
   atualizar_mercado:
