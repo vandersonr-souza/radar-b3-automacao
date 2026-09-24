@@ -75,28 +75,50 @@ assert HGBrasilProvedor(chave="k").proventos("X", date(2025, 1, 1)) is None
 ok("sem chave = indisponível; proventos = None (formato não validado, não arrisca)")
 
 print("=== yfinance (biblioteca simulada) ===")
-idx = pd.to_datetime(["2026-09-21", "2026-09-22", "2026-09-23"]).tz_localize("America/Sao_Paulo")
+idx = pd.to_datetime(["2025-06-02", "2026-02-10", "2026-09-22", "2026-09-23"]).tz_localize("America/Sao_Paulo")
+chamadas_yf = []
+class LimiteYahoo(Exception): pass
+LimiteYahoo.__name__ = "YFRateLimitError"
+limites = {}                                   # ticker -> quantas vezes ainda devolve limite
 class FakeTicker:
     def __init__(s, sym): s.sym = sym
-    def history(s, period, auto_adjust):
+    def history(s, period, auto_adjust, actions):
+        chamadas_yf.append(s.sym)
+        assert period == "13mo" and actions is True
+        if limites.get(s.sym, 0) > 0:
+            limites[s.sym] -= 1; raise LimiteYahoo("Too Many Requests. Rate limited.")
         if s.sym == "ERRO3.SA": raise RuntimeError("falha simulada")
         if s.sym == "VAZIO3.SA": return pd.DataFrame()
-        return pd.DataFrame({"Close": [30.0, 31.0, 32.5]}, index=idx)
-    @property
-    def dividends(s):
-        return pd.Series([0.4, 0.6], index=pd.to_datetime(["2025-06-02", "2026-02-10"]).tz_localize("America/Sao_Paulo"))
+        return pd.DataFrame({"Close": [30.0, 31.0, 32.0, 32.5], "Dividends": [0.4, 0.6, 0.0, 0.0]}, index=idx)
 fake_yf = types.SimpleNamespace(Ticker=FakeTicker)
+esperas_feitas = []
 with mock.patch.dict(sys.modules, {"yfinance": fake_yf}):
-    from provedores.yfinance_prov import YFinanceProvedor
-    yp = YFinanceProvedor()
+    import importlib, provedores.yfinance_prov as ymod
+    importlib.reload(ymod)
+    novo = lambda: ymod.YFinanceProvedor(pausa=0, esperas=[20, 60], disjuntor=2, dormir=esperas_feitas.append)
+    yp = novo()
     assert yp.disponivel()[0]
     cot = yp.cotacoes(["PETR4", "ERRO3", "VAZIO3"])
     pv = yp.proventos("PETR4", date(2025, 9, 1))
-assert set(cot) == {"PETR4"} and cot["PETR4"].preco == 32.5 and cot["PETR4"].momento.date() == date(2026, 9, 23)
-assert [(p.valor_por_acao, p.data_ex) for p in pv] == [(0.6, date(2026, 2, 10))]
-ok("último fechamento; ticker com exceção/ vazio não derruba o lote; proventos filtrados por data")
+    assert chamadas_yf.count("PETR4.SA") == 1, chamadas_yf
+    ok("UMA requisição por ativo: proventos reaproveitam o que a cotação baixou")
+    assert set(cot) == {"PETR4"} and cot["PETR4"].preco == 32.5 and cot["PETR4"].momento.date() == date(2026, 9, 23)
+    assert [(p.valor_por_acao, p.data_ex) for p in pv] == [(0.6, date(2026, 2, 10))]
+    assert yp.proventos("ERRO3", date(2025, 1, 1)) is None
+    ok("último fechamento; dividendos da mesma resposta; falha = None ('não sei'), nunca lista vazia")
+
+    limites.update({"ITUB4.SA": 1})            # limitado 1 vez, depois responde
+    esperas_feitas.clear(); yp = novo()
+    assert "ITUB4" in yp.cotacoes(["ITUB4"]) and esperas_feitas[:1] == [20]
+    ok("limite do Yahoo: espera e tenta de novo, sem perder o ativo")
+
+    limites.update({"AAAA3.SA": 9, "BBBB3.SA": 9, "CCCC3.SA": 9})
+    chamadas_yf.clear(); esperas_feitas.clear(); yp = novo()
+    cot = yp.cotacoes(["AAAA3", "BBBB3", "CCCC3", "PETR4"])
+    assert yp.bloqueado and cot == {} and "CCCC3.SA" not in chamadas_yf and "PETR4.SA" not in chamadas_yf
+    ok("disjuntor: 2 ativos seguidos limitados após as esperas -> para de consultar o Yahoo")
+
 with mock.patch.dict(sys.modules, {"yfinance": None}):
-    import importlib, provedores.yfinance_prov as ymod
     importlib.reload(ymod)
     assert ymod.YFinanceProvedor().disponivel() == (False, "biblioteca yfinance não instalada (pip install yfinance)")
 ok("biblioteca ausente = indisponível com motivo, sem quebrar")
