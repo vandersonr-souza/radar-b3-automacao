@@ -12,11 +12,19 @@ from provedores import base
 
 HOJE = date(2026, 9, 24)
 
+COLUNAS_TABELA = ["ticker", "tipo", "nome", "setor", "segmento_fii", "preco", "dy_12m", "dpa_ltm",
+    "dpa_ltm1", "dpa_ltm2", "bazin_preco_justo_min", "bazin_preco_justo_max", "bazin_regular",
+    "dy_atende_criterio_bazin_6pct", "bazin_elegibilidade", "p_l", "p_vp", "margem_bruta",
+    "margem_liquida", "roic", "roe", "liquidez_media_diaria", "vacancia_fisica", "vacancia_financeira",
+    "is_best", "payout_implicito", "faixa_payout", "coerente_dy_lucro", "status_compra",
+    "recomendacao_motivo", "atualizado_em", "lpa", "vpa"]
+
 def linha_base(t, tipo, preco, **kw):
-    d = {"ticker": t, "tipo": tipo, "preco": preco, "nome": f"Empresa {t}", "setor": None,
+    d = {c: None for c in COLUNAS_TABELA}
+    d.update({"ticker": t, "tipo": tipo, "preco": preco, "nome": f"Empresa {t}", "setor": None,
          "p_l": None, "p_vp": None, "margem_bruta": None, "margem_liquida": None, "roe": None,
          "roic": None, "liquidez_media_diaria": 1e6, "vacancia_fisica": None,
-         "vacancia_financeira": None, "lpa": None, "vpa": None}
+         "vacancia_financeira": None, "lpa": None, "vpa": None})
     d.update(kw); return d
 
 BASE = [
@@ -41,7 +49,9 @@ def fca_linha(cnpj, nome, ticker, mercado="Bolsa", fim=""):
 FCA_2026 = zip_fca([fca_linha("33.000.167/0001-01", "PETROBRAS", "PETR4"),
                     fca_linha("11.111.111/0001-11", "NOVA SA", "NOVA3"),
                     fca_linha("22.222.222/0001-22", "OLD SA", "OLDX3", fim="2026-06-30"),
-                    fca_linha("33.000.167/0001-01", "PETROBRAS", "", mercado="Balcão Organizado")])
+                    fca_linha("33.000.167/0001-01", "PETROBRAS", "", mercado="Balcão Organizado"),
+                    fca_linha("00.000.000/0001-00", "LIXO", "0000"), fca_linha("00.000.000/0001-00", "LIXO", "N/A"),
+                    fca_linha("00.000.000/0001-00", "LIXO", "B3")])
 
 class R:
     def __init__(s, corpo=None, status=200, content=b""):
@@ -65,10 +75,11 @@ PROVENTOS = {
               [base.Provento("HGLG11", 1.1, date(2025, m, 15), "fake") for m in (10, 11, 12)],
     "XPML11": [base.Provento("XPML11", 0.9, date(2026, 9, 1), "fake")],
     "NOVA3": [],        # fonte sabe informar e não há registro -> DY desconhecido, não 0 real
+    "OLDX3": [],        # só entra quando o FCA está fora do ar (cenário 5)
     # SEMP11: None -> fonte não informa
 }
 
-def rodar(base_rows=BASE, precos=PRECOS, fca=FCA_2026, fca_falha=False):
+def rodar(base_rows=BASE, precos=PRECOS, fca=FCA_2026, fca_falha=False, proventos=None):
     posts = []
     def fget(url, headers=None, timeout=None, params=None):
         if "supabase.co/rest/v1/ativos_mercado" in url:
@@ -83,7 +94,7 @@ def rodar(base_rows=BASE, precos=PRECOS, fca=FCA_2026, fca_falha=False):
         posts.append((url, json)); return R({}, 201)
     ns, cod, out = {"__name__": "__main__"}, None, io.StringIO()
     with mock.patch("requests.get", side_effect=fget), mock.patch("requests.post", side_effect=fpost), \
-         mock.patch("fontes_dados.carregar_provedores", return_value=[Fake(precos, PROVENTOS)]), \
+         mock.patch("fontes_dados.carregar_provedores", return_value=[Fake(precos, proventos or PROVENTOS)]), \
          mock.patch("fontes_dados.hoje_brasilia", return_value=HOJE), contextlib.redirect_stdout(out):
         try: exec(compile(open("atualiza_statusinvest.py", encoding="utf-8").read(), "x", "exec"), ns)
         except SystemExit as e: cod = e.code
@@ -95,8 +106,13 @@ print("=== 1. carga normal ===")
 ns, posts, cod, log = rodar()
 assert cod is None, log[-800:]
 pl = {p["ticker"]: p for u, p_ in posts if u.endswith("/ativos_mercado") for p in p_}
-assert set(pl) == {"PETR4", "TAEE11", "NOVA3", "HGLG11", "XPML11", "SEMP11"}, set(pl)
-ok("OLDX3 (encerrada no FCA) fora; NOVA3 (nova no FCA) dentro; linhas de balcão ignoradas")
+assert set(pl) == {"PETR4", "TAEE11", "NOVA3", "HGLG11", "XPML11"}, set(pl)
+ok("OLDX3 (encerrada no FCA) fora; NOVA3 (nova no FCA) dentro; balcão e lixo do FCA ('0000', 'N/A', 'B3') ignorados")
+ok("SEMP11 (fonte não informou proventos) fora da carga -- não vai a DY 0")
+lotes = [p_ for u, p_ in posts if u.endswith("/ativos_mercado")]
+assert all(len({frozenset(x) for x in lote}) == 1 for lote in lotes)
+assert set(lotes[0][0]) == set(COLUNAS_TABELA)
+ok("ações e FIIs com as MESMAS chaves (o lote misto não é mais recusado) e só colunas da tabela")
 
 p = pl["PETR4"]
 assert p["preco"] == 48.0 and p["lpa"] == 8.0 and p["p_l"] == 6.0      # 48 / (40/5)
@@ -122,10 +138,10 @@ assert h["vacancia_fisica"] == 5.8 and h["status_compra"] == "BOM PARA COMPRA"
 ok("HGLG11: P/VP pelo VPA guardado, vacância mantida, regra de FII tijolo intacta")
 assert pl["XPML11"]["vacancia_fisica"] is None and pl["XPML11"]["status_compra"] == "NEUTRO"
 ok("XPML11: vacância ausente continua nula -> NEUTRO")
-assert "3 sem proventos informados" in log or "sem proventos informados" in log
+assert "1 fora por proventos não informados" in log and "Proventos informados: 5/6" in log
 hist = [x for u, p_ in posts if "historico" in u for x in p_]
-assert len(hist) == 6
-ok("histórico diário gravado para os 6 ativos")
+assert len(hist) == 5
+ok("histórico diário gravado para os 5 ativos")
 
 print("=== 2. segundo dia: LPA guardado vence a identidade ===")
 base2 = [dict(r) for r in BASE]
@@ -150,6 +166,35 @@ print("=== 5. CVM fora do ar ===")
 ns, posts, cod, log = rodar(fca_falha=True)
 assert cod is None and "FCA da CVM indisponível" in log
 tick = {x["ticker"] for u, p_ in posts if u.endswith("/ativos_mercado") for x in p_}
-assert "NOVA3" not in tick and "OLDX3" in tick
+assert "NOVA3" not in tick and "OLDX3" in tick and "SEMP11" not in tick
 ok("segue só com a lista da base (FCA é enriquecimento, não ponto único de falha)")
+
+print("=== 6. coluna faltando na tabela (1ª carga real, 24/set) ===")
+sem_col = [{k: v for k, v in r.items() if k != "bazin_elegibilidade"} for r in BASE]
+ns, posts, cod, log = rodar(base_rows=sem_col)
+assert cod == 1 and posts == [] and "bazin_elegibilidade" in log and "003_colunas_regras.sql" in log
+ok("aborta ANTES de enviar, nomeando a coluna e o SQL a rodar")
+
+print("=== 7. Yahoo limitado: preço veio, proventos não (1ª carga real) ===")
+ns, posts, cod, log = rodar(proventos={"PETR4": PROVENTOS["PETR4"]})
+assert cod == 1 and posts == [] and "zeraria o DY" in log
+ok("aborta sem gravar -- antes, 658 ativos teriam ido a DY 0 / NEUTRO")
+
+print("=== 8. ordem de consulta: mais líquidos primeiro ===")
+ordem = []
+class Espiao(Fake):
+    def cotacoes(s, tickers): ordem.extend(tickers); return super().cotacoes(tickers)
+base_liq = [dict(r) for r in BASE]
+for r in base_liq:
+    r["liquidez_media_diaria"] = {"XPML11": 9e9, "TAEE11": 5e9}.get(r["ticker"], 1e3)
+with mock.patch("fontes_dados.carregar_provedores", return_value=[Espiao(PRECOS, PROVENTOS)]):
+    import fontes_dados, importlib
+    def fget(url, headers=None, timeout=None, params=None):
+        if "ativos_mercado" in url: return R(base_liq if "offset=0" in url else [])
+        if "2026" in url: return R(status=200, content=FCA_2026)
+        return R(status=404)
+    with mock.patch("requests.get", side_effect=fget), contextlib.redirect_stdout(io.StringIO()):
+        fontes_dados.montar_listas("https://x.supabase.co", {}, hoje=HOJE)
+assert ordem[:2] == ["XPML11", "TAEE11"], ordem
+ok("XPML11 e TAEE11 (mais líquidos) consultados primeiro")
 print("\n🎉 todos os cenários passaram")
