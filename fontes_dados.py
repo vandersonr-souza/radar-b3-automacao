@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from provedores import buscar_cotacoes, buscar_proventos, carregar_provedores, dy_12m
+from provedores.calculos import regularidade_bazin
 
 FCA_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_{ano}.zip"
 COBERTURA_MINIMA = 0.5   # menos da metade dos ativos com preço = fonte provavelmente bloqueada
@@ -180,7 +181,7 @@ def montar_listas(supabase_url: str, headers: dict, provedores=None, hoje: date 
         raise FalhaFonte(f"só {cobertura:.0%} dos ativos com preço (mínimo {COBERTURA_MINIMA:.0%}) "
                          "-- provável bloqueio das fontes. Nada será gravado.")
 
-    desde = hoje - timedelta(days=400)
+    desde = hoje - timedelta(days=365 * 3 + 30)   # 3 anos: DY 12m e regularidade de Bazin
     def _prov(t):
         return t, buscar_proventos(t, desde, provedores)
     with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -225,6 +226,8 @@ def montar_listas(supabase_url: str, headers: dict, provedores=None, hoje: date 
                 "_lpa": None, "_vpa": vpa})
         else:
             lpa = _por_acao(snap, "lpa", "p_l")
+            serie = next((sp for sp in (pv.serie_precos(t) for pv in provedores) if sp), None)
+            bazin = regularidade_bazin(lista, serie, cot.preco, hoje)
             acoes_data.append({**comum,
                 "p_l": cot.preco / lpa if lpa else None,
                 "p_vp": cot.preco / vpa if vpa else None,
@@ -232,7 +235,7 @@ def montar_listas(supabase_url: str, headers: dict, provedores=None, hoje: date 
                 "margembruta": snap.get("margem_bruta"),
                 "margemliquida": snap.get("margem_liquida"),
                 "roe": snap.get("roe"), "roic": snap.get("roic"),
-                "_lpa": lpa, "_vpa": vpa})
+                "_lpa": lpa, "_vpa": vpa, "_bazin": bazin})
 
     novas = sorted(set(acoes) - set(snapshot))
     colunas = set().union(*(set(l) for l in snapshot.values()))
