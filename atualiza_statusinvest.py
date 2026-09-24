@@ -223,6 +223,22 @@ for item in acoes_data:
     # script não tem como verificar sem histórico real de proventos.
     dy_atende_criterio_bazin_6pct = dy >= 6.0
     bazin_elegibilidade = "NAO_CONFIRMADA_FALTA_REGULARIDADE_HISTORICA"
+    # Regularidade de 3 anos (24/set): calculada em fontes_dados.py a partir de
+    # 3 anos de proventos, cash-yield de cada ano contra o preço DAQUELA época
+    # (critério literal de Bazin: os 3 últimos dividendos, SEMPRE >= 6%).
+    # Os textos são os mesmos que o app já usa, para aparecerem certos na v16.
+    _bazin = item.get("_bazin")
+    dpa_ltm1 = dpa_ltm2 = None
+    frase_regularidade = "Regularidade histórica de 3 anos não verificada por esta fonte."
+    if _bazin:
+        dpa_ltm1, dpa_ltm2 = round(_bazin["dpa"][1], 2), round(_bazin["dpa"][2], 2)
+        ys = " / ".join(f"{y:.1f}%" for y in _bazin["cash_yield"])
+        if _bazin["regular"]:
+            bazin_elegibilidade = "Qualificado no Método (3/3 anos >= 6%)"
+            frase_regularidade = f"Regularidade de 3 anos confirmada (cash-yield por ano: {ys})."
+        else:
+            bazin_elegibilidade = "Não Qualificado no Método (cash-yield < 6% em algum dos 3 anos)"
+            frase_regularidade = f"Regularidade de 3 anos NÃO atendida (cash-yield por ano: {ys})."
     # Mantido só por compatibilidade com quem já lia este campo; é um alias
     # do critério acima, não uma regra nova.
     bazin_regular = dy_atende_criterio_bazin_6pct
@@ -261,10 +277,10 @@ for item in acoes_data:
     elif dy_atende_criterio_bazin_6pct:
         if is_best:
             status_compra = "COMPRA FORTE"
-            motivo = f"Setor BEST perene com DY de {dy:.1f}% (atinge o piso de 6% no yield atual) e ROIC de {roic:.1f}%. Regularidade histórica de 3 anos não verificada por esta fonte."
+            motivo = f"Setor BEST perene com DY de {dy:.1f}% (atinge o piso de 6% no yield atual) e ROIC de {roic:.1f}%. {frase_regularidade}"
         else:
             status_compra = "OPORTUNIDADE PREÇO"
-            motivo = f"DY de {dy:.1f}% atinge o piso de 6% no yield atual. Regularidade histórica de 3 anos não verificada por esta fonte."
+            motivo = f"DY de {dy:.1f}% atinge o piso de 6% no yield atual. {frase_regularidade}"
     else:
         status_compra = "NEUTRO"
         motivo = f"DY de {dy:.1f}% não atinge o piso de 6% no yield atual."
@@ -287,8 +303,8 @@ for item in acoes_data:
         # não mandar o campo do que mandar um campo que parece verificado
         # e não é. Use bazin_elegibilidade para saber que isso não foi
         # confirmado.
-        "dpa_ltm1": None,
-        "dpa_ltm2": None,
+        "dpa_ltm1": dpa_ltm1,
+        "dpa_ltm2": dpa_ltm2,
         "bazin_preco_justo_min": bazin_min,
         "bazin_preco_justo_max": bazin_max,
         # bazin_regular/dy_atende_criterio_bazin_6pct: SÓ o yield atual,
