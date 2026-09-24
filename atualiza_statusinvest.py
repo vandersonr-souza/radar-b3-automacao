@@ -102,15 +102,31 @@ def baixar_lista_statusinvest(url, rotulo):
     return lista
 
 
-print("1/3 Baixando Ações (incluindo ROIC, ROE e Liquidez)...")
-url_acoes = "https://statusinvest.com.br/category/advancedsearchresultpaginated?search=%7B%7D&CategoryType=1&take=600"
-acoes_data = baixar_lista_statusinvest(url_acoes, "ações")
-print(f"-> {len(acoes_data)} ações obtidas.")
+# Fonte dos dados (24/set). O Status Invest bloqueia o IP do GitHub
+# Actions (HTTP 403 do Cloudflare desde 21/set) e cortava a lista em 600.
+# Padrão agora: CVM (FCA) + cascata de provedores + última foto da base,
+# montados por fontes_dados.py no MESMO formato de item -- as regras
+# abaixo não mudaram. FONTE_DADOS=statusinvest mantém o caminho antigo.
+FONTE_DADOS = os.environ.get("FONTE_DADOS", "cvm_provedores").strip().lower()
+if FONTE_DADOS == "statusinvest":
+    print("1/3 Baixando Ações (incluindo ROIC, ROE e Liquidez)...")
+    url_acoes = "https://statusinvest.com.br/category/advancedsearchresultpaginated?search=%7B%7D&CategoryType=1&take=600"
+    acoes_data = baixar_lista_statusinvest(url_acoes, "ações")
+    print(f"-> {len(acoes_data)} ações obtidas.")
 
-print("2/3 Baixando FIIs (incluindo Vacância Física e Financeira)...")
-url_fiis = "https://statusinvest.com.br/category/advancedsearchresultpaginated?search=%7B%7D&CategoryType=2&take=600"
-fiis_data = baixar_lista_statusinvest(url_fiis, "FIIs")
-print(f"-> {len(fiis_data)} FIIs obtidos.")
+    print("2/3 Baixando FIIs (incluindo Vacância Física e Financeira)...")
+    url_fiis = "https://statusinvest.com.br/category/advancedsearchresultpaginated?search=%7B%7D&CategoryType=2&take=600"
+    fiis_data = baixar_lista_statusinvest(url_fiis, "FIIs")
+    print(f"-> {len(fiis_data)} FIIs obtidos.")
+else:
+    from fontes_dados import FalhaFonte, montar_listas
+    print("1/3 Montando ações e FIIs (CVM FCA + provedores + última foto da base)...")
+    try:
+        acoes_data, fiis_data, relatorio_fontes = montar_listas(SUPABASE_URL, HEADERS_SUPABASE)
+    except FalhaFonte as e:
+        print(f"ERRO: {e}")
+        sys.exit(1)
+    print(f"2/3 -> {len(acoes_data)} ações e {len(fiis_data)} FIIs montados.")
 
 # Trava de carga vazia (23/set). Antes, se o Status Invest bloqueasse a
 # requisição (ex.: página anti-robô em HTML no lugar do JSON), as duas
@@ -401,6 +417,15 @@ for item in fiis_data:
         "recomendacao_motivo": motivo,
         "atualizado_em": ATUALIZADO_EM
     })
+
+if FONTE_DADOS != "statusinvest":
+    # LPA/VPA guardados para que P/L e P/VP de amanhã usem o mesmo valor
+    # (sem "andar" com o arredondamento). Colunas criadas por sql/002.
+    _por_acao = {i["ticker"]: (i.get("_lpa"), i.get("_vpa")) for i in acoes_data + fiis_data}
+    for linha in payload:
+        lpa, vpa = _por_acao.get(linha["ticker"], (None, None))
+        linha["lpa"] = round(lpa, 6) if lpa else None
+        linha["vpa"] = round(vpa, 6) if vpa else None
 
 if sem_preco:
     print(f"{len(sem_preco)} ativo(s) sem cotação, não gravados: {', '.join(sem_preco[:15])}"
