@@ -1,0 +1,30 @@
+# Teste MANUAL (não roda sozinho): as fontes de preço respondem de dentro
+# do GitHub Actions? O Status Invest respondia no PC e bloqueava aqui --
+# este workflow confirma, com dado real, antes de o coletor depender delas.
+# Rodar em: Actions -> "Teste de provedores (manual)" -> Run workflow.
+name: Teste de provedores (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Tickers separados por espaço"
+        required: false
+        default: "PETR4 VALE3 ITUB4 HGLG11 TAEE11 BBAS3 KNRI11 WEGE3"
+
+jobs:
+  testar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependências
+        run: pip install requests yfinance pandas
+      - name: Testes sem rede (formatos e cascata)
+        run: python teste_provedores.py
+      - name: Validação com rede real, de dentro do Actions
+        env:
+          BRAPI_TOKEN: ${{ secrets.BRAPI_TOKEN }}   # opcional; vazio = só 4 tickers na brapi
+        run: python valida_provedores.py ${{ github.event.inputs.tickers }}
