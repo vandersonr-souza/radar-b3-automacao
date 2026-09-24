@@ -26,5 +26,5 @@ jobs:
         run: python teste_provedores.py
       - name: Validação com rede real, de dentro do Actions
         env:
-          BRAPI_TOKEN: ${{ secrets.BRAPI_TOKEN }}   # opcional; vazio = só 4 tickers na brapi
+          BRAPI_TOKEN: ${{ secrets.BRAPI_TOKEN }}   # opcional; vazio = brapi desligada
         run: python valida_provedores.py ${{ github.event.inputs.tickers }}
