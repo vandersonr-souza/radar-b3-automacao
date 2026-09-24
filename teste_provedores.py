@@ -18,6 +18,19 @@ class R:
 
 def ok(msg): print("  ✅", msg)
 
+# Checagem de versão (25/set): o repositório já ficou com teste novo e
+# plugue antigo, e o erro aparecia só como "AssertionError" sem pista.
+import inspect, provedores.yfinance_prov as _yf, provedores.base as _b, provedores.calculos as _c
+_faltando = [f"{arq} (procure por '{marca}')" for arq, mod, marca in (
+    ("provedores/yfinance_prov.py", _yf, '"37mo"'),
+    ("provedores/base.py", _b, "def serie_precos"),
+    ("provedores/calculos.py", _c, "def regularidade_bazin"),
+) if marca.strip('"') not in inspect.getsource(mod)]
+if _faltando:
+    raise SystemExit("ARQUIVO(S) DESATUALIZADO(S) NO REPOSITÓRIO: " + "; ".join(_faltando) +
+                     ". Substitua pelo arquivo novo DENTRO da pasta provedores/ (não na raiz).")
+print("  ✅ versões dos arquivos de provedores conferidas")
+
 print("=== modelo ===")
 for ruim in (0, -1, float("nan"), float("inf"), None):
     try: base.Cotacao("X", ruim, "t"); raise AssertionError(f"aceitou {ruim}")
@@ -84,7 +97,7 @@ class FakeTicker:
     def __init__(s, sym): s.sym = sym
     def history(s, period, auto_adjust, actions):
         chamadas_yf.append(s.sym)
-        assert period == "13mo" and actions is True
+        assert period == "37mo" and actions is True
         if limites.get(s.sym, 0) > 0:
             limites[s.sym] -= 1; raise LimiteYahoo("Too Many Requests. Rate limited.")
         if s.sym == "ERRO3.SA": raise RuntimeError("falha simulada")
