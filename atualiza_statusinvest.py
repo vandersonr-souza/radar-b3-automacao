@@ -400,6 +400,11 @@ for item in fiis_data:
         "bazin_preco_justo_min": None,
         "bazin_preco_justo_max": None,
         "bazin_regular": None,
+        # Mesmas chaves do payload de ações: o Supabase recusa um lote com
+        # objetos de chaves diferentes (PGRST102, visto em 24/set no lote
+        # que misturava ações e FIIs). Bazin não se aplica a FII -> None.
+        "dy_atende_criterio_bazin_6pct": None,
+        "bazin_elegibilidade": None,
         "p_l": None,
         "p_vp": round(p_vp, 2) if p_vp != 0 else None,
         "margem_bruta": None,
@@ -426,6 +431,24 @@ if FONTE_DADOS != "statusinvest":
         lpa, vpa = _por_acao.get(linha["ticker"], (None, None))
         linha["lpa"] = round(lpa, 6) if lpa else None
         linha["vpa"] = round(vpa, 6) if vpa else None
+
+# Rede de segurança: todo objeto do lote com as MESMAS chaves (preenche
+# ausentes com None). O caso conhecido (FII sem campos de Bazin) já foi
+# corrigido acima; isto evita que um campo novo esquecido derrube a carga.
+_todas_chaves = set().union(*(set(l) for l in payload)) if payload else set()
+for linha in payload:
+    for chave in _todas_chaves - set(linha):
+        linha[chave] = None
+
+# Checagem de colunas ANTES de enviar (24/set: 14 lotes recusados por
+# colunas que não existiam na tabela). Só no caminho novo, que conhece as
+# colunas pela leitura da base.
+if FONTE_DADOS != "statusinvest" and payload:
+    _faltando = sorted(_todas_chaves - relatorio_fontes["colunas_existentes"])
+    if _faltando:
+        print(f"ERRO: a tabela ativos_mercado não tem as colunas {_faltando}. "
+              "Rode sql/003_colunas_regras.sql no Supabase. Nada foi gravado.")
+        sys.exit(1)
 
 if sem_preco:
     print(f"{len(sem_preco)} ativo(s) sem cotação, não gravados: {', '.join(sem_preco[:15])}"
