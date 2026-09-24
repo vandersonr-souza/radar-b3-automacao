@@ -213,7 +213,10 @@ def montar_listas(supabase_url: str, headers: dict, provedores=None, hoje: date 
         dy = dy_12m(lista, cot.preco, hoje)
         sem_dy += dy is None
         comum = {"ticker": t, "price": cot.preco, "dy": dy,
-                 "companyName": snap.get("nome") or (fca.get(t) or {}).get("nome") or t,
+                 # Nome: a base herdada do Status Invest traz vários ativos com
+                 # nome == ticker ("PETR4"); nesse caso vale o nome oficial da CVM.
+                 "companyName": (snap.get("nome") if snap.get("nome") and snap.get("nome") != t
+                                 else None) or (fca.get(t) or {}).get("nome") or snap.get("nome") or t,
                  "liquidezmediadiaria": snap.get("liquidez_media_diaria"),
                  "_fonte_preco": cot.fonte}
         vpa = _por_acao(snap, "vpa", "p_vp")
