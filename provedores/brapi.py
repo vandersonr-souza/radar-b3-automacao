@@ -6,11 +6,15 @@ Formatos confirmados na documentação oficial (brapi.dev/docs, set/2026):
   Proventos GET /api/v2/stocks/dividends?symbols=A&startDate=YYYY-MM-DD
             -> results[].data.cashDividends[].{rate, exDate, lastDatePrior,
                paymentDate, label}
-Sem token, só PETR4, VALE3, MGLU3 e ITUB4 respondem. Token: variável
+A doc diz que PETR4, VALE3, MGLU3 e ITUB4 respondem sem token, mas em
+24/set a v2 exigiu token para todos (ver disponivel). Token: variável
 de ambiente BRAPI_TOKEN (header Authorization: Bearer).
 
-NÃO VERIFICADO: quantos tickers por requisição o plano aceita. Ajuste
-BRAPI_LOTE se vierem erros 400.
+VERIFICADO em 24/set (rodada real): o plano GRATUITO aceita 1 ativo por
+requisição (HTTP 400 com a mensagem "Seu plano permite no máximo 1
+ativo(s) por requisição"); o plano Startup aceita 10. Padrão: BRAPI_LOTE=1.
+Com plano pago, defina BRAPI_LOTE=10. NÃO VERIFICADO: a cota diária de
+requisições do plano gratuito.
 'rate' é o valor por ação na escala de preços AJUSTADA (o valor sem ajuste,
 rawRate, exige plano Pro) -- consistente com o preço atual para o DY.
 """
@@ -31,15 +35,18 @@ class BrapiProvedor(ProvedorMercado):
 
     def __init__(self, token: str | None = None, lote: int | None = None):
         self.token = token if token is not None else os.environ.get("BRAPI_TOKEN", "")
-        self.lote = lote or int(os.environ.get("BRAPI_LOTE", "10"))
+        self.lote = lote or int(os.environ.get("BRAPI_LOTE", "1"))
 
     def _headers(self):
         return {"Authorization": f"Bearer {self.token}"} if self.token else {}
 
     def disponivel(self):
-        # Funciona sem token para os 4 tickers de teste; os demais voltam
-        # negados e caem para o próximo provedor da cascata.
-        return True, "" if self.token else "sem BRAPI_TOKEN: só PETR4, VALE3, MGLU3 e ITUB4"
+        # VERIFICADO em 24/set (Actions): sem token, a v2 responde HTTP 401
+        # MISSING_TOKEN até para PETR4/VALE3/ITUB4 -- a documentação diz que
+        # esses respondem sem token, mas na prática não. Sem token = desligado.
+        if not self.token:
+            return False, "variável BRAPI_TOKEN não definida (a API v2 exige token)"
+        return True, ""
 
     def cotacoes(self, tickers):
         saida = {}
