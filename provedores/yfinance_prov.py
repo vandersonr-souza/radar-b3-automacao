@@ -2,7 +2,8 @@
 
 Sem chave. Ticker da B3 no Yahoo leva o sufixo ".SA".
 
-UMA requisição por ativo (24/set, após a 1ª carga real no Actions ser
+UMA requisição por ativo, 37 meses (3 anos + folga, para a regularidade
+de Bazin), mesma requisição de antes. (24/set, após a 1ª carga real no Actions ser
 limitada pelo Yahoo com YFRateLimitError): Ticker.history(period="13mo",
 actions=True) já traz o fechamento E a coluna Dividends (valor por ação na
 data-ex). Antes eram duas (history + .dividends), sem pausa -- ~2.500
@@ -47,7 +48,7 @@ class YFinanceProvedor(ProvedorMercado):
             float(x) for x in os.environ.get("YF_ESPERAS", "20,60").split(",") if x.strip()]
         self.disjuntor = disjuntor if disjuntor is not None else int(os.environ.get("YF_DISJUNTOR", "3"))
         self._dormir = dormir
-        self._cache: dict[str, tuple | None] = {}   # ticker -> (preco, momento, [(data, valor)]) | None
+        self._cache: dict[str, tuple | None] = {}   # ticker -> (preco, momento, [(data, valor)], [(data, fech)]) | None
         self._limitados_seguidos = 0
         self.bloqueado = False
         self._trava = threading.Lock()
@@ -65,7 +66,7 @@ class YFinanceProvedor(ProvedorMercado):
             return None
         for tentativa in range(len(self.esperas) + 1):
             try:
-                hist = self._yf.Ticker(f"{t}.SA").history(period="13mo", auto_adjust=False, actions=True)
+                hist = self._yf.Ticker(f"{t}.SA").history(period="37mo", auto_adjust=False, actions=True)
                 self._limitados_seguidos = 0
                 break
             except Exception as e:
@@ -103,7 +104,8 @@ class YFinanceProvedor(ProvedorMercado):
                     continue
                 if v > 0:
                     divs.append((idx.date() if hasattr(idx, "date") else idx, v))
-        self._cache[t] = (float(fech.iloc[-1]), fech.index[-1].to_pydatetime(), divs)
+        serie = [((i.date() if hasattr(i, "date") else i), float(v)) for i, v in fech.items()]
+        self._cache[t] = (float(fech.iloc[-1]), fech.index[-1].to_pydatetime(), divs, serie)
         return self._cache[t]
 
     def cotacoes(self, tickers):
@@ -127,3 +129,9 @@ class YFinanceProvedor(ProvedorMercado):
         if dado is None:
             return None               # não sei (não baixou) -- nunca "não pagou"
         return [Provento(t, v, d, self.nome) for d, v in dado[2] if d >= desde]
+
+    def serie_precos(self, ticker):
+        t = normalizar_ticker(ticker)
+        with self._trava:
+            dado = self._baixar(t)
+        return None if dado is None else dado[3]
