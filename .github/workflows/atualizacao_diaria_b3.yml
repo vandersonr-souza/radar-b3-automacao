@@ -2,14 +2,13 @@ name: Atualização Diária da B3 no Supabase
 
 on:
   schedule:
-    # Executa de segunda a sexta às 21:30 UTC (18:30 no fuso de Brasília)
-    - cron: '30 21 * * 1-5'
-  workflow_dispatch: # Permite acionar manualmente a qualquer momento
+    - cron: '30 21 * * 1-5'   # 18:30 de Brasília, dias úteis
+  workflow_dispatch:
 
 jobs:
   atualizar_mercado:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 60
     steps:
       - name: Obter código do repositório
         uses: actions/checkout@v4
@@ -19,12 +18,20 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Instalar Dependências
-        run: |
-          pip install requests
+      - name: Instalar dependências
+        run: pip install requests yfinance pandas
 
-      - name: Executar Carga da B3 no Supabase
+      - name: Testes sem rede (param a carga se algo quebrou no código)
+        run: |
+          python teste_provedores.py
+          python teste_coletor.py
+          python teste_carga.py
+
+      - name: Executar carga (CVM + provedores) no Supabase
         env:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: |
-          python atualiza_statusinvest.py
+          BRAPI_TOKEN: ${{ secrets.BRAPI_TOKEN }}       # opcional
+          HGBRASIL_KEY: ${{ secrets.HGBRASIL_KEY }}     # opcional
+          FONTE_DADOS: cvm_provedores
+          PROVEDORES_ORDEM: yfinance,brapi,hgbrasil
+        run: python atualiza_statusinvest.py
