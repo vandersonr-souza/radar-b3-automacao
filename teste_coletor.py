@@ -228,4 +228,11 @@ assert t["bazin_elegibilidade"].startswith("Não Qualificado") and t["dpa_ltm1"]
 ok("TAEE11 com só 1 ano pago: reprovada, sem contradição com o motivo")
 assert pl["HGLG11"]["dpa_ltm1"] is None and pl["HGLG11"]["bazin_elegibilidade"] is None
 ok("FII continua fora do Bazin (campos nulos)")
+
+print("=== 10. nome oficial da CVM quando a base tem nome == ticker ===")
+base_nome = [dict(r) for r in BASE]; base_nome[0]["nome"] = "PETR4"
+ns, posts, cod, log = rodar(base_rows=base_nome)
+pl = {x["ticker"]: x for u, p_ in posts if u.endswith("/ativos_mercado") for x in p_}
+assert pl["PETR4"]["nome"] == "PETROBRAS" and pl["TAEE11"]["nome"] == "Empresa TAEE11", (pl["PETR4"]["nome"], pl["TAEE11"]["nome"])
+ok("PETR4 ganha o nome do FCA; nome bom da base é mantido")
 print("\n🎉 todos os cenários passaram")
