@@ -34,4 +34,7 @@ jobs:
           HGBRASIL_KEY: ${{ secrets.HGBRASIL_KEY }}     # opcional
           FONTE_DADOS: cvm_provedores
           PROVEDORES_ORDEM: yfinance,brapi,hgbrasil
+          YF_PAUSA: "0.5"          # segundos entre ativos no Yahoo
+          YF_ESPERAS: "20,60"      # esperas ao ser limitado
+          YF_DISJUNTOR: "3"        # ativos seguidos limitados até desistir do Yahoo
         run: python atualiza_statusinvest.py
