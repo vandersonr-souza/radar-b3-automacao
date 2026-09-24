@@ -197,4 +197,35 @@ with mock.patch("fontes_dados.carregar_provedores", return_value=[Espiao(PRECOS,
         fontes_dados.montar_listas("https://x.supabase.co", {}, hoje=HOJE)
 assert ordem[:2] == ["XPML11", "TAEE11"], ordem
 ok("XPML11 e TAEE11 (mais líquidos) consultados primeiro")
+
+print("=== 9. regularidade de Bazin (3 anos, preço da época) ===")
+from datetime import timedelta
+class ComSerie(Fake):
+    def serie_precos(s, t):
+        return [(HOJE - timedelta(days=d), p) for d, p in ((1100, 30.0), (731, 35.0), (366, 40.0), (1, s.precos[t]))]
+PV3 = dict(PROVENTOS)
+PV3["PETR4"] = [base.Provento("PETR4", v, HOJE - timedelta(days=d), "f") for d, v in ((100, 3.64), (400, 2.6), (800, 2.4))]
+PV3["TAEE11"] = [base.Provento("TAEE11", 3.0, HOJE - timedelta(days=100), "f")]    # só 1 ano pago
+with mock.patch("fontes_dados.carregar_provedores", return_value=[ComSerie(PRECOS, PV3)]):
+    def fget(url, headers=None, timeout=None, params=None):
+        if "ativos_mercado" in url: return R(BASE if "offset=0" in url else [])
+        if "2026" in url: return R(status=200, content=FCA_2026)
+        return R(status=404)
+    posts = []
+    def fpost(url, json=None, headers=None, timeout=None): posts.append((url, json)); return R({}, 201)
+    ns = {"__name__": "__main__"}
+    with mock.patch("requests.get", side_effect=fget), mock.patch("requests.post", side_effect=fpost), \
+         mock.patch("fontes_dados.hoje_brasilia", return_value=HOJE), contextlib.redirect_stdout(io.StringIO()):
+        exec(compile(open("atualiza_statusinvest.py", encoding="utf-8").read(), "x", "exec"), ns)
+pl = {x["ticker"]: x for u, p_ in posts if u.endswith("/ativos_mercado") for x in p_}
+p = pl["PETR4"]
+assert p["dpa_ltm1"] == 2.6 and p["dpa_ltm2"] == 2.4, (p["dpa_ltm1"], p["dpa_ltm2"])
+assert p["bazin_elegibilidade"] == "Qualificado no Método (3/3 anos >= 6%)"
+assert "confirmada" in p["recomendacao_motivo"] and "não verificada" not in p["recomendacao_motivo"]
+ok(f"PETR4 aprovada: DPA real dos anos anteriores e motivo coerente -> {p['recomendacao_motivo'][-60:]}")
+t = pl["TAEE11"]
+assert t["bazin_elegibilidade"].startswith("Não Qualificado") and t["dpa_ltm1"] == 0.0
+ok("TAEE11 com só 1 ano pago: reprovada, sem contradição com o motivo")
+assert pl["HGLG11"]["dpa_ltm1"] is None and pl["HGLG11"]["bazin_elegibilidade"] is None
+ok("FII continua fora do Bazin (campos nulos)")
 print("\n🎉 todos os cenários passaram")
