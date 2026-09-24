@@ -63,3 +63,8 @@ class ProvedorMercado(ABC):
         None  = este provedor NÃO sabe informar proventos (não é 'zero').
         []    = sabe informar e não há registro no período."""
         return None
+
+    def serie_precos(self, ticker: str) -> list[tuple] | None:
+        """[(data, fechamento), ...] do histórico já baixado, se o provedor
+        tiver. None = não informa. Usado na regularidade de 3 anos (Bazin)."""
+        return None
