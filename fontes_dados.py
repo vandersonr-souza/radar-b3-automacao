@@ -21,6 +21,7 @@ De onde vem cada campo (24/set/2026):
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
@@ -32,6 +33,11 @@ from provedores import buscar_cotacoes, buscar_proventos, carregar_provedores, d
 
 FCA_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_{ano}.zip"
 COBERTURA_MINIMA = 0.5   # menos da metade dos ativos com preço = fonte provavelmente bloqueada
+COBERTURA_PROVENTOS_MINIMA = 0.5   # idem para proventos, entre os que têm preço
+# Código de negociação válido na B3: 4 caracteres (1º letra) + 1 ou 2 dígitos,
+# com "B" opcional (ex.: PETR4, TAEE11, ENMA3B, RCRI11B). O FCA traz lixo
+# nessa coluna (visto em 24/set: "0000", "N/A", "B3", "ADR", "1").
+TICKER_VALIDO = re.compile(r"^[A-Z][A-Z0-9]{3}\d{1,2}B?$")
 
 
 class FalhaFonte(Exception):
@@ -102,7 +108,7 @@ def ler_fca(ano_atual: int) -> tuple[dict[str, dict], set[str]]:
     for ano in (ano_atual - 1, ano_atual):          # o mais novo sobrescreve
         for r in _csv_valor_mobiliario(ano):
             t = (r.get("Codigo_Negociacao") or "").strip().upper()
-            if not t or (r.get("Mercado") or "").strip() != "Bolsa":
+            if not TICKER_VALIDO.match(t) or (r.get("Mercado") or "").strip() != "Bolsa":
                 continue
             chave = ((r.get("Data_Referencia") or ""), (r.get("Versao") or ""))
             atual = por_ticker.get(t)
@@ -139,7 +145,7 @@ def _por_acao(snap: dict, campo_guardado: str, multiplo: str):
 
 
 def montar_listas(supabase_url: str, headers: dict, provedores=None, hoje: date | None = None,
-                  workers: int = 8):
+                  workers: int = 1):
     """-> (acoes_data, fiis_data, relatorio). Levanta FalhaFonte se não der
     para montar uma carga confiável."""
     hoje = hoje or hoje_brasilia()
@@ -158,9 +164,14 @@ def montar_listas(supabase_url: str, headers: dict, provedores=None, hoje: date 
         print(f"AVISO: FCA da CVM indisponível ({type(e).__name__}: {e}); usando só a lista da base.")
         fca, encerrados = {}, set()
 
-    acoes = sorted(({t for t, s in snapshot.items() if s.get("tipo") == "ACAO"} | set(fca)) - encerrados)
-    fiis = sorted(t for t, s in snapshot.items() if s.get("tipo") == "FII")
-    todos = acoes + fiis
+    acoes = sorted(t for t in ({t for t, s in snapshot.items() if s.get("tipo") == "ACAO"} | set(fca))
+                   if TICKER_VALIDO.match(t) and t not in encerrados)
+    fiis = sorted(t for t, s in snapshot.items() if s.get("tipo") == "FII" and TICKER_VALIDO.match(t))
+    # Mais líquidos primeiro: se a fonte limitar no meio (visto em 24/set com
+    # o Yahoo), o que fica sem atualizar é a cauda pouco negociada -- não
+    # sempre os mesmos ativos do fim do alfabeto.
+    liq = lambda t: _num(snapshot.get(t, {}).get("liquidez_media_diaria")) or 0.0
+    todos = sorted(acoes + fiis, key=lambda t: (-liq(t), t))
 
     cotacoes, faltando, resumo = buscar_cotacoes(todos, provedores)
     cobertura = len(cotacoes) / len(todos) if todos else 0
@@ -175,14 +186,29 @@ def montar_listas(supabase_url: str, headers: dict, provedores=None, hoje: date 
     with ThreadPoolExecutor(max_workers=workers) as ex:
         proventos = dict(ex.map(_prov, list(cotacoes)))
 
+    # Proventos NÃO informados (None) = a fonte falhou/foi limitada para este
+    # ativo. Gravar com DY 0 mudaria o status de verdade (visto em 24/set:
+    # Yahoo limitou e os 658 ativos teriam ido a DY 0 / NEUTRO). O ativo fica
+    # fora desta carga; a linha antiga permanece, com o carimbo antigo.
+    sem_proventos = sorted(t for t, (lista, _) in proventos.items() if lista is None)
+    com_proventos = len(proventos) - len(sem_proventos)
+    cob_prov = com_proventos / len(proventos) if proventos else 0
+    print(f"Proventos informados: {com_proventos}/{len(proventos)} ({cob_prov:.0%})")
+    if cob_prov < COBERTURA_PROVENTOS_MINIMA:
+        raise FalhaFonte(f"só {cob_prov:.0%} dos ativos com preço têm proventos informados "
+                         f"(mínimo {COBERTURA_PROVENTOS_MINIMA:.0%}) -- provável limite/bloqueio da "
+                         "fonte. Gravar agora zeraria o DY de verdade. Nada será gravado.")
+
     sem_dy = 0
     acoes_data, fiis_data = [], []
     for t in todos:
         cot = cotacoes.get(t)
         if cot is None:
             continue                      # sem preço: fica fora; a linha antiga permanece
-        snap = snapshot.get(t, {})
         lista, _fonte_prov = proventos.get(t, (None, None))
+        if lista is None:
+            continue                      # proventos não informados: fica fora (ver acima)
+        snap = snapshot.get(t, {})
         dy = dy_12m(lista, cot.preco, hoje)
         sem_dy += dy is None
         comum = {"ticker": t, "price": cot.preco, "dy": dy,
@@ -209,10 +235,13 @@ def montar_listas(supabase_url: str, headers: dict, provedores=None, hoje: date 
                 "_lpa": lpa, "_vpa": vpa})
 
     novas = sorted(set(acoes) - set(snapshot))
+    colunas = set().union(*(set(l) for l in snapshot.values()))
     relatorio = {"acoes": len(acoes_data), "fiis": len(fiis_data), "sem_preco": faltando,
+                 "sem_proventos": sem_proventos, "colunas_existentes": colunas,
                  "sem_dy": sem_dy, "fontes_preco": resumo, "acoes_novas_fca": novas,
                  "encerradas_fca": sorted(encerrados & set(snapshot))}
-    print(f"Montado: {len(acoes_data)} ações, {len(fiis_data)} FIIs; {sem_dy} sem proventos informados "
-          f"(DY desconhecido); {len(novas)} ações novas vindas do FCA; "
+    print(f"Montado: {len(acoes_data)} ações, {len(fiis_data)} FIIs; {len(sem_proventos)} fora por "
+          f"proventos não informados; {sem_dy} sem provento nos últimos 12 meses (DY 0 pelas regras); "
+          f"{len(novas)} ações novas vindas do FCA; "
           f"{len(relatorio['encerradas_fca'])} encerradas segundo o FCA (fora da carga).")
     return acoes_data, fiis_data, relatorio
