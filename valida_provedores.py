@@ -9,7 +9,7 @@ Uso:
     python valida_provedores.py                      (tickers de teste)
     python valida_provedores.py PETR4 HGLG11 TAEE11
 Chaves opcionais (variáveis de ambiente): BRAPI_TOKEN, HGBRASIL_KEY.
-Sem BRAPI_TOKEN a brapi só responde PETR4, VALE3, MGLU3 e ITUB4.
+Sem BRAPI_TOKEN a brapi fica desligada (a API v2 exige token).
 """
 import sys
 from datetime import date, timedelta
