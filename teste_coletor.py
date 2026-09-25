@@ -235,4 +235,15 @@ ns, posts, cod, log = rodar(base_rows=base_nome)
 pl = {x["ticker"]: x for u, p_ in posts if u.endswith("/ativos_mercado") for x in p_}
 assert pl["PETR4"]["nome"] == "PETROBRAS" and pl["TAEE11"]["nome"] == "Empresa TAEE11", (pl["PETR4"]["nome"], pl["TAEE11"]["nome"])
 ok("PETR4 ganha o nome do FCA; nome bom da base é mantido")
+
+print("=== 11. DY improvável (> 25%) vira ALERTA RISCO ===")
+pv_alto = dict(PROVENTOS); pv_alto["PETR4"] = [base.Provento("PETR4", 80.0, HOJE - timedelta(days=30), "f")]
+ns, posts, cod, log = rodar(proventos=pv_alto)
+pl = {x["ticker"]: x for u, p_ in posts if u.endswith("/ativos_mercado") for x in p_}
+p = pl["PETR4"]
+assert p["status_compra"] == "ALERTA RISCO" and "improvável" in p["recomendacao_motivo"]
+assert p["bazin_elegibilidade"] == "NAO_CONFIRMADA_DY_SUSPEITO" and p["dy_12m"] > 100
+assert pl["TAEE11"]["status_compra"] == "COMPRA FORTE"
+assert "marcados como ALERTA RISCO: PETR4" in log
+ok("PETR4 com DY de 167%: ALERTA RISCO com motivo; dado mantido; TAEE11 normal intacta")
 print("\n🎉 todos os cenários passaram")
