@@ -448,6 +448,29 @@ if FONTE_DADOS != "statusinvest":
         linha["lpa"] = round(lpa, 6) if lpa else None
         linha["vpa"] = round(vpa, 6) if vpa else None
 
+# DY improvável (25/set). Visto no app: WEST3 166%, SCAR3 58%, MMAQ3 45% no
+# topo do "Top Bazin". Acima deste limite o número quase nunca é renda
+# recorrente: provento extraordinário, amortização, grupamento/desdobramento
+# não ajustado ou erro da fonte. Não apagamos o dado (pode ser real); o
+# ativo sai de qualquer veredito de compra e o motivo explica o porquê.
+# "ALERTA RISCO" já é um status que o app exibe com destaque.
+DY_SUSPEITO = float(os.environ.get("DY_SUSPEITO", "25"))
+dy_suspeitos = []
+for linha in payload:
+    dy_l = linha.get("dy_12m")
+    if dy_l is not None and dy_l > DY_SUSPEITO:
+        dy_suspeitos.append(f"{linha['ticker']} ({dy_l:.0f}%)")
+        linha["status_compra"] = "ALERTA RISCO"
+        linha["recomendacao_motivo"] = (
+            f"DY de {dy_l:.1f}% é improvável como renda recorrente: provável provento "
+            "extraordinário, amortização, grupamento/desdobramento ou erro da fonte (Yahoo). "
+            "Confira os proventos no RI da empresa antes de considerar.")
+        if linha.get("tipo") == "ACAO":
+            linha["bazin_elegibilidade"] = "NAO_CONFIRMADA_DY_SUSPEITO"
+if dy_suspeitos:
+    print(f"{len(dy_suspeitos)} ativo(s) com DY > {DY_SUSPEITO:.0f}% marcados como ALERTA RISCO: "
+          f"{', '.join(dy_suspeitos[:20])}{' ...' if len(dy_suspeitos) > 20 else ''}")
+
 # Rede de segurança: todo objeto do lote com as MESMAS chaves (preenche
 # ausentes com None). O caso conhecido (FII sem campos de Bazin) já foi
 # corrigido acima; isto evita que um campo novo esquecido derrube a carga.
